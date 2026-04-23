@@ -6,7 +6,6 @@ plugins {
     id("com.android.application")
     id("kotlin-parcelize")
     id("org.jetbrains.kotlin.android")
-    id("bilimiao-build")
 }
 
 android {
