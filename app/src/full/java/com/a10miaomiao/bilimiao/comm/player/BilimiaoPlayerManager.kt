@@ -1,12 +1,15 @@
 package com.a10miaomiao.bilimiao.comm.player
 
-import com.shuyu.gsyvideoplayer.player.IjkPlayerManager
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import com.shuyu.gsyvideoplayer.player.PlayerFactory
 
 object BilimiaoPlayerManager {
 
+    @OptIn(UnstableApi::class)
     fun initConfig() {
-        PlayerFactory.setPlayManager(IjkPlayerManager::class.java)
+        // AV1
+        PlayerFactory.setPlayManager(Libgav1Media3ExoPlayerManager::class.java)
     }
 
 }

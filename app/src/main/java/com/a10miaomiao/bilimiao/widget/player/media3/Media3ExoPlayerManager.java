@@ -7,13 +7,6 @@ import android.net.Uri;
 import android.os.Message;
 import android.view.Surface;
 
-import androidx.annotation.Nullable;
-import androidx.annotation.OptIn;
-import androidx.media3.common.util.UnstableApi;
-import androidx.media3.exoplayer.DefaultRenderersFactory;
-import androidx.media3.exoplayer.SeekParameters;
-import androidx.media3.exoplayer.video.PlaceholderSurface;
-
 import com.shuyu.gsyvideoplayer.cache.ICacheManager;
 import com.shuyu.gsyvideoplayer.model.GSYModel;
 import com.shuyu.gsyvideoplayer.model.VideoOptionModel;
@@ -22,17 +15,19 @@ import com.shuyu.gsyvideoplayer.player.BasePlayerManager;
 import java.util.List;
 
 import tv.danmaku.ijk.media.player.IMediaPlayer;
+import tv.danmaku.ijk.media.player.IjkMediaPlayer;
 
-@OptIn(markerClass = UnstableApi.class)
+/**
+ * 名字虽然叫 Media3ExoPlayerManager，但内部已经换成 IjkPlayer
+ * 用于测试 ijkplayer 是否能正常工作
+ */
 public class Media3ExoPlayerManager extends BasePlayerManager {
 
     private Context context;
 
-    private ExoMediaPlayer mediaPlayer;
+    private IjkMediaPlayer mediaPlayer;
 
     private Surface surface;
-
-    private PlaceholderSurface dummySurface;
 
     private long lastTotalRxBytes = 0;
 
@@ -43,43 +38,67 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
         return mediaPlayer;
     }
 
-    protected ExoMediaPlayer buildMediaPlayer(Context context) {
-        DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(context)
-                .setEnableDecoderFallback(true);
-        ExoMediaPlayer exoMediaPlayer = new ExoMediaPlayer(context);
-        exoMediaPlayer.setRendererFactory(renderersFactory);
-        return exoMediaPlayer;
+    protected IjkMediaPlayer buildMediaPlayer(Context context) {
+        IjkMediaPlayer ijkMediaPlayer = new IjkMediaPlayer();
+        
+        // --- IJK 基础配置 ---
+        // 开启硬解 (0软解，1硬解)
+        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec", 1);
+        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-auto-rotate", 1);
+        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "mediacodec-handle-resolution-change", 1);
+        
+        // 缓冲优化
+        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_PLAYER, "packet-buffering", 1);
+        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "dns_cache_clear", 1);
+        
+        // B站视频通常需要这个来处理重定向或特殊的Range请求
+        ijkMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "http-detect-range-support", 0);
+        
+        return ijkMediaPlayer;
     }
 
     @Override
     public void initVideoPlayer(Context context, Message msg, List<VideoOptionModel> optionModelList, ICacheManager cacheManager) {
         this.context = context.getApplicationContext();
+        
+        // 1. 加载 native 库（非常重要，如果 so 没加载会崩或者没反应）
+        try {
+            IjkMediaPlayer.loadLibrariesOnce(null);
+            IjkMediaPlayer.native_profileBegin("libijkplayer.so");
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
+
         mediaPlayer = buildMediaPlayer(context);
         mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC);
-        if (dummySurface == null) {
-            dummySurface = PlaceholderSurface.newInstanceV17(context, false);
-        }
-        //使用自己的cache模式
+
         GSYModel gsyModel = (GSYModel) msg.obj;
         try {
+            // 2. 设置数据源
             mediaPlayer.setLooping(gsyModel.isLooping());
-            mediaPlayer.setPreview(gsyModel.getMapHeadData() != null && gsyModel.getMapHeadData().size() > 0);
-            if (gsyModel.isCache() && cacheManager != null) {
-                //通过管理器处理
-                cacheManager.doCacheLogic(context, mediaPlayer, gsyModel.getUrl(), gsyModel.getMapHeadData(), gsyModel.getCachePath());
-            } else {
-                //通过自己的内部缓存机制
-                mediaPlayer.setCache(gsyModel.isCache());
-                mediaPlayer.setCacheDir(gsyModel.getCachePath());
-                mediaPlayer.setOverrideExtension(gsyModel.getOverrideExtension());
-                mediaPlayer.setDataSource(context, Uri.parse(gsyModel.getUrl()), gsyModel.getMapHeadData());
-            }
+            
+            // ijkplayer 设置 DataSource (支持 Header)
+            mediaPlayer.setDataSource(context, Uri.parse(gsyModel.getUrl()), gsyModel.getMapHeadData());
+
             if (gsyModel.getSpeed() != 1 && gsyModel.getSpeed() > 0) {
-                mediaPlayer.setSpeed(gsyModel.getSpeed(), 1);
+                mediaPlayer.setSpeed(gsyModel.getSpeed());
             }
+            
+            // 3. 设置监听器（GSY 框架依赖这些回调）
+            mediaPlayer.setOnPreparedListener(this);
+            mediaPlayer.setOnVideoSizeChangedListener(this);
+            mediaPlayer.setOnErrorListener(this);
+            mediaPlayer.setOnCompletionListener(this);
+            mediaPlayer.setOnInfoListener(this);
+            mediaPlayer.setOnBufferingUpdateListener(this);
+            
+            // 4. 异步准备
+            mediaPlayer.prepareAsync();
+            
         } catch (Exception e) {
             e.printStackTrace();
         }
+        
         initSuccess(gsyModel);
     }
 
@@ -89,7 +108,7 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
             return;
         }
         if (msg.obj == null) {
-            mediaPlayer.setSurface(dummySurface);
+            mediaPlayer.setSurface(null);
         } else {
             Surface holder = (Surface) msg.obj;
             surface = holder;
@@ -101,7 +120,7 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
     public void setSpeed(final float speed, final boolean soundTouch) {
         if (mediaPlayer != null) {
             try {
-                mediaPlayer.setSpeed(speed, 1);
+                mediaPlayer.setSpeed(speed);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -129,7 +148,6 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
     @Override
     public void releaseSurface() {
         if (surface != null) {
-            //surface.release();
             surface = null;
         }
     }
@@ -141,20 +159,13 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
             mediaPlayer.release();
             mediaPlayer = null;
         }
-        if (dummySurface != null) {
-            dummySurface.release();
-            dummySurface = null;
-        }
         lastTotalRxBytes = 0;
         lastTimeStamp = 0;
     }
 
     @Override
     public int getBufferedPercentage() {
-        if (mediaPlayer != null) {
-            return mediaPlayer.getBufferedPercentage();
-        }
-        return 0;
+        return 0; // IjkMediaPlayer 通常通过 OnBufferingUpdateListener 更新
     }
 
     @Override
@@ -165,11 +176,12 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
         return 0;
     }
 
-
     @Override
     public void setSpeedPlaying(float speed, boolean soundTouch) {
+        if (mediaPlayer != null) {
+            mediaPlayer.setSpeed(speed);
+        }
     }
-
 
     @Override
     public void start() {
@@ -260,32 +272,19 @@ public class Media3ExoPlayerManager extends BasePlayerManager {
         return false;
     }
 
-
-    /**
-     * 设置seek 的临近帧。
-     **/
-    public void setSeekParameter(@Nullable SeekParameters seekParameters) {
-        if (mediaPlayer != null) {
-            mediaPlayer.setSeekParameter(seekParameters);
-        }
-    }
-
-
     private long getNetSpeed(Context context) {
         if (context == null) {
             return 0;
         }
-        long nowTotalRxBytes = TrafficStats.getUidRxBytes(context.getApplicationInfo().uid) == TrafficStats.UNSUPPORTED ? 0 : (TrafficStats.getTotalRxBytes() / 1024);//转为KB
+        long nowTotalRxBytes = TrafficStats.getUidRxBytes(context.getApplicationInfo().uid) == TrafficStats.UNSUPPORTED ? 0 : (TrafficStats.getTotalRxBytes() / 1024);
         long nowTimeStamp = System.currentTimeMillis();
         long calculationTime = (nowTimeStamp - lastTimeStamp);
         if (calculationTime == 0) {
-            return calculationTime;
+            return 0;
         }
-        //毫秒转换
         long speed = ((nowTotalRxBytes - lastTotalRxBytes) * 1000 / calculationTime);
         lastTimeStamp = nowTimeStamp;
         lastTotalRxBytes = nowTotalRxBytes;
         return speed;
     }
-
 }
