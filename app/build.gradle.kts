@@ -16,7 +16,7 @@ android {
         minSdk = 21
         targetSdk = 35
         versionCode = 117
-        versionName = "2.4.8.1"
+        versionName = "2.4.8.1-ijkplayer"
 
         flavorDimensions("default")
 
@@ -25,9 +25,9 @@ android {
         ndk {
             abiFilters.add("arm64-v8a")
             abiFilters.add("armeabi-v7a")
-            abiFilters.add("armeabi")
-            abiFilters.add("x86")
-            abiFilters.add("x86_64")
+//            abiFilters.add("armeabi")
+//            abiFilters.add("x86")
+//            abiFilters.add("x86_64")
         }
     }
 
