@@ -32,6 +32,7 @@ import com.a10miaomiao.bilimiao.comm.datastore.SettingConstants
 import com.a10miaomiao.bilimiao.comm.datastore.SettingPreferences
 import com.a10miaomiao.bilimiao.store.WindowStore
 import kotlinx.serialization.Serializable
+import androidx.compose.runtime.collectAsState
 import me.zhanghai.compose.preference.ProvidePreferenceLocals
 import me.zhanghai.compose.preference.listPreference
 import me.zhanghai.compose.preference.preference
@@ -413,8 +414,8 @@ private fun VideoSettingPageContent(
             item("bottom") {
                 Spacer(
                     modifier = Modifier.height(
-                        windowInsets.bottomDp.dp + windowStore.bottomAppBarHeightDp.dp
-                    )
+    (windowInsets.bottomDp + windowStore.bottomAppBarHeightDp).dp
+)
                 )
             }
         }
